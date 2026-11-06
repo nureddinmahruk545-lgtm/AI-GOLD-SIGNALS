@@ -135,8 +135,14 @@ const App = {
         analysis
       );
 
-      this.elements.details.textContent =
-  "JSON TEST: " + JSON.stringify(analysis);
+     this.elements.details.textContent =
+  "Analysis: " + (analysis.success ? "SUCCESS" : "FAILED") +
+  "\nTrend 1H: " + analysis.structure.oneH.trend +
+  "\nTrend 5M: " + analysis.structure.fiveM.trend +
+  "\nLiquidity: " + analysis.liquidity.length +
+  "\nOrder Blocks: " + analysis.orderBlocks.length +
+  "\nFVG: " + analysis.fvg.length +
+  "\nS/R: " + analysis.supportResistance.length; 
     } catch (error) {
       console.error(
         "AI GOLD SIGNALS Error:",

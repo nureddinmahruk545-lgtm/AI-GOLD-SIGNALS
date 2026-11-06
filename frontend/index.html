@@ -6,8 +6,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0b1120">
   <title>AI GOLD SIGNALS</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="frontend/style.css">
 </head>
+
 <body>
   <header class="header">
     <h1>AI GOLD SIGNALS</h1>
@@ -15,9 +16,10 @@
   </header>
 
   <main class="dashboard">
+
     <section class="card">
       <h2>Gold Market</h2>
-      <p class="muted">Market data connection pending</p>
+      <p class="muted">Market data connection</p>
       <div id="gold-price">Waiting for data...</div>
     </section>
 
@@ -27,17 +29,43 @@
     </section>
 
     <section class="card">
-      <h2>Trading Signal</h2>
-      <div id="signal">NO DATA</div>
-      <p id="signal-details">No verified signal available.</p>
+      <h2>SMC Diagnostics</h2>
+      <pre id="smc-diagnostics">Waiting for SMC analysis...</pre>
     </section>
+
+    <section class="card">
+      <h2>Trading Signal</h2>
+      <div id="signal">NO TRADE</div>
+      <p id="signal-details">
+        Trading signals are disabled during diagnostic testing.
+      </p>
+    </section>
+
   </main>
 
   <footer>
     <p>AI GOLD SIGNALS · Analysis only · No trade execution</p>
   </footer>
 
-  <script src="../engine/market-data.js"></script>
-<script src="app.js"></script>
+  <!-- Market Data -->
+  <script src="engine/market-data.js"></script>
+
+  <!-- SMC Engines -->
+  <script src="engine/structure.js"></script>
+  <script src="engine/liquidity.js"></script>
+  <script src="engine/order-blocks.js"></script>
+  <script src="engine/fvg.js"></script>
+  <script src="engine/support-resistance.js"></script>
+
+  <!-- Strategy and Risk -->
+  <script src="engine/strategy.js"></script>
+  <script src="engine/risk-manager.js"></script>
+
+  <!-- Analysis Engine -->
+  <script src="engine/analysis-engine.js"></script>
+
+  <!-- Frontend -->
+  <script src="frontend/app.js"></script>
+
 </body>
 </html>

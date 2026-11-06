@@ -1,0 +1,85 @@
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: #0b1120;
+  color: #e5e7eb;
+  font-family: Arial, sans-serif;
+  padding: 20px;
+}
+
+.header {
+  text-align: center;
+  padding: 30px 10px;
+  border-bottom: 1px solid #263247;
+}
+
+.header h1 {
+  color: #d6a23a;
+  font-size: 27px;
+  letter-spacing: 2px;
+}
+
+.header p {
+  color: #94a3b8;
+  margin-top: 10px;
+}
+
+.dashboard {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+  max-width: 1000px;
+  margin: 30px auto;
+}
+
+.card {
+  background: #141e30;
+  border: 1px solid #29364d;
+  border-radius: 14px;
+  padding: 22px;
+}
+
+.card h2 {
+  color: #d6a23a;
+  margin-bottom: 15px;
+}
+
+.muted {
+  color: #94a3b8;
+}
+
+#gold-price {
+  font-size: 25px;
+  margin-top: 15px;
+  font-weight: bold;
+}
+
+#signal {
+  font-size: 24px;
+  font-weight: bold;
+  color: #facc15;
+  margin: 12px 0;
+}
+
+#signal-details {
+  color: #94a3b8;
+  line-height: 1.6;
+}
+
+footer {
+  text-align: center;
+  color: #64748b;
+  font-size: 12px;
+  padding: 25px 5px;
+}
+
+@media (min-width: 700px) {
+  .dashboard {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

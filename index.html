@@ -5,8 +5,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0b1120">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <title>AI GOLD SIGNALS</title>
-  <link rel="stylesheet" href="frontend/style.css">
+
+  <link rel="stylesheet" href="frontend/style.css?v=3">
 </head>
 
 <body>
@@ -21,9 +23,9 @@
     <section class="card">
       <h2>Gold Market</h2>
       <p class="muted" id="connection-status">
-        Market data connection pending
+        Initializing connection...
       </p>
-      <div id="gold-price">Waiting for data...</div>
+      <div id="gold-price">Waiting for market data...</div>
     </section>
 
     <section class="card">
@@ -35,14 +37,14 @@
 
     <section class="card">
       <h2>SMC Diagnostics</h2>
-      <pre id="smc-diagnostics">Waiting for SMC analysis...</pre>
+      <pre id="smc-diagnostics">Initializing SMC diagnostics...</pre>
     </section>
 
     <section class="card">
       <h2>Trading Signal</h2>
       <div id="signal">NO TRADE</div>
       <p id="signal-details">
-        No verified signal available.
+        Diagnostic mode only. No verified trading signal.
       </p>
     </section>
 
@@ -53,24 +55,24 @@
   </footer>
 
   <!-- Market Data -->
-  <script src="engine/market-data.js"></script>
+  <script src="engine/market-data.js?v=3"></script>
 
   <!-- SMC Analysis Engines -->
-  <script src="engine/structure.js"></script>
-  <script src="engine/liquidity.js"></script>
-  <script src="engine/order-blocks.js"></script>
-  <script src="engine/fvg.js"></script>
-  <script src="engine/support-resistance.js"></script>
+  <script src="engine/structure.js?v=3"></script>
+  <script src="engine/liquidity.js?v=3"></script>
+  <script src="engine/order-blocks.js?v=3"></script>
+  <script src="engine/fvg.js?v=3"></script>
+  <script src="engine/support-resistance.js?v=3"></script>
 
   <!-- Strategy and Risk -->
-  <script src="engine/strategy.js"></script>
-  <script src="engine/risk-manager.js"></script>
+  <script src="engine/strategy.js?v=3"></script>
+  <script src="engine/risk-manager.js?v=3"></script>
 
   <!-- Central Analysis Engine -->
-  <script src="engine/analysis-engine.js"></script>
+  <script src="engine/analysis-engine.js?v=3"></script>
 
   <!-- Frontend -->
-  <script src="frontend/app.js"></script>
+  <script src="frontend/app.js?v=3"></script>
 
 </body>
 </html>

@@ -1,4 +1,3 @@
-
 "use strict";
 
 // ======================================
@@ -73,7 +72,11 @@ const AnalysisEngine = {
 
       const liquidity = detectLiquiditySweeps(
         fiveM.candles,
-        swingEvents
+        swingEvents,
+        {
+          nowSeconds,
+          timeframeSeconds: 300
+        }
       );
 
       // 3. Order Blocks

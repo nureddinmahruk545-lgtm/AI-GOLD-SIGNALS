@@ -1,29 +1,117 @@
+
 "use strict";
 
 // ======================================
 // AI GOLD SIGNALS
 // Central Analysis Engine
-// XAUUSD | 1H + 5M
-// Fail-Closed Signal Validation
+// SMC / ICT Integration
+// BUY LIMIT / SELL LIMIT / MARKET
+// Closed-candle processing
 // ======================================
 
 const AnalysisEngine = (() => {
 
-  const CONFIG = Object.freeze({
+  const CONFIG = {
     symbol: "XAUUSD",
-    timeframes: {
-      "1H": 3600,
-      "5M": 300
-    },
-    minCandles: 20,
-    minRiskReward: 2,
-    maxRiskPercent: 1
-  });
 
-  function isValidCandle(candle) {
-    if (!candle || typeof candle !== "object") {
-      return false;
+    timeframes: {
+      "5M": 300,
+      "1H": 3600
+    },
+
+    minCandles: 30,
+    minRiskReward: 2,
+    minSRTouches: 3,
+
+    structureStrength: 2,
+    obLookback: 10,
+
+    // Small price buffer around the OB.
+    stopBuffer: 0.5
+  };
+
+  // ======================================
+  // Dependencies
+  // ======================================
+
+  function getDependencies() {
+    // Browser mode
+    if (typeof window !== "undefined") {
+      return {
+        analyzeStructure: window.analyzeStructure,
+        detectLiquiditySweeps: window.detectLiquiditySweeps,
+        detectOrderBlocks: window.detectOrderBlocks,
+        detectFVG: window.detectFVG,
+        updateFVGStatus: window.updateFVGStatus,
+        detectSupportResistance:
+          window.detectSupportResistance,
+        StrategyEngine: window.StrategyEngine
+      };
     }
+
+    // Node.js mode
+    if (typeof require === "function") {
+      return {
+        analyzeStructure:
+          require("./structure").analyzeStructure,
+
+        detectLiquiditySweeps:
+          require("./liquidity").detectLiquiditySweeps,
+
+        detectOrderBlocks:
+          require("./order-blocks").detectOrderBlocks,
+
+        detectFVG:
+          require("./fvg").detectFVG,
+
+        updateFVGStatus:
+          require("./fvg").updateFVGStatus,
+
+        detectSupportResistance:
+          require("./support-resistance")
+            .detectSupportResistance,
+
+        StrategyEngine:
+          require("./strategy")
+      };
+    }
+
+    throw new Error("Engine dependencies are unavailable.");
+  }
+
+  // ======================================
+  // Helpers
+  // ======================================
+
+  function isNumber(value) {
+    return (
+      typeof value === "number" &&
+      Number.isFinite(value)
+    );
+  }
+
+  function noTrade(reason, diagnostics = {}) {
+    return {
+      success: true,
+      mode: "ANALYSIS",
+
+      signal: {
+        type: "NO TRADE",
+        direction: "NONE",
+        executionType: null,
+        entry: null,
+        stopLoss: null,
+        takeProfit: null,
+        riskReward: null,
+        reason
+      },
+
+      diagnostics
+    };
+  }
+
+  function validateCandle(candle) {
+    if (!candle) return false;
 
     const values = [
       candle.time,
@@ -33,58 +121,39 @@ const AnalysisEngine = (() => {
       candle.close
     ];
 
-    if (!values.every(Number.isFinite)) {
+    if (!values.every(isNumber)) {
       return false;
     }
 
     return (
-      candle.time > 0 &&
       candle.high >= candle.low &&
-      candle.high >= Math.max(candle.open, candle.close) &&
-      candle.low <= Math.min(candle.open, candle.close)
+      candle.high >= Math.max(
+        candle.open,
+        candle.close
+      ) &&
+      candle.low <= Math.min(
+        candle.open,
+        candle.close
+      )
     );
   }
 
-  function getClosedCandles(candles, timeframeSeconds, nowSeconds) {
+  // Keep only fully closed candles.
+  function getClosedCandles(
+    candles,
+    timeframeSeconds,
+    nowSeconds
+  ) {
     if (!Array.isArray(candles)) {
-      throw new Error("Candles must be an array.");
+      return [];
     }
 
-    const result = [];
-
-    let previousTime = -Infinity;
-
-    for (let i = 0; i < candles.length; i++) {
-      const candle = candles[i];
-
-      if (!isValidCandle(candle)) {
-        throw new Error("Invalid candle at index " + i);
-      }
-
-      if (candle.time <= previousTime) {
-        throw new Error("Candle timestamps are not strictly increasing.");
-      }
-
-      previousTime = candle.time;
-
-      if (candle.time + timeframeSeconds <= nowSeconds) {
-        result.push({
-          ...candle,
-          sourceIndex: i
-        });
-      }
-    }
-
-    if (result.length < CONFIG.minCandles) {
-      throw new Error(
-        "Insufficient closed candles. Required: " +
-        CONFIG.minCandles +
-        ", received: " +
-        result.length
+    return candles.filter(candle => {
+      return (
+        validateCandle(candle) &&
+        candle.time + timeframeSeconds <= nowSeconds
       );
-    }
-
-    return result;
+    });
   }
 
   function getLatest(items, predicate = () => true) {
@@ -92,388 +161,666 @@ const AnalysisEngine = (() => {
 
     const filtered = items.filter(predicate);
 
-    return filtered.length
-      ? filtered[filtered.length - 1]
-      : null;
+    if (!filtered.length) return null;
+
+    return filtered[filtered.length - 1];
   }
 
-  function getLatestPrice(candles) {
-    return candles[candles.length - 1].close;
-  }
+  // ======================================
+  // Order Block validation
+  // ======================================
 
-  function getNearestLevel(levels, type, price) {
-    if (!Array.isArray(levels)) return null;
-
-    const candidates = levels.filter(level =>
-      level &&
-      level.type === type &&
-      Number.isFinite(level.price) &&
-      Number.isFinite(level.touchCount) &&
-      level.touchCount >= 3 &&
-      level.confirmed === true &&
-      level.reacted === true
-    );
-
-    if (!candidates.length) return null;
-
-    return candidates.sort((a, b) =>
-      Math.abs(a.price - price) -
-      Math.abs(b.price - price)
-    )[0];
-  }
-
-  function requireFunction(name) {
-    const fn = globalThis[name];
-
-    if (typeof fn !== "function") {
-      throw new Error(name + " engine is not loaded.");
+  function validateOrderBlock(block, candles) {
+    if (
+      !block ||
+      !isNumber(block.high) ||
+      !isNumber(block.low) ||
+      !Number.isInteger(block.confirmationIndex) ||
+      block.low >= block.high
+    ) {
+      return false;
     }
 
-    return fn;
+    if (
+      block.confirmationIndex < 0 ||
+      block.confirmationIndex >= candles.length
+    ) {
+      return false;
+    }
+
+    // Check whether a later candle invalidated the block.
+    for (
+      let i = block.confirmationIndex + 1;
+      i < candles.length;
+      i++
+    ) {
+      const candle = candles[i];
+
+      if (block.type === "BULLISH_OB") {
+        if (candle.close < block.low) {
+          return false;
+        }
+      }
+
+      if (block.type === "BEARISH_OB") {
+        if (candle.close > block.high) {
+          return false;
+        }
+      }
+    }
+
+    return true;
   }
 
-  function buildStrategyInput(analysis, tradePlan) {
-    const trend = analysis.structure.oneH.trend;
+  // ======================================
+  // FVG selection
+  // ======================================
 
-    const bullish = trend === "BULLISH";
-
-    const expectedSweep = bullish
-      ? "SSL_SWEEP"
-      : "BSL_SWEEP";
-
-    const expectedOB = bullish
-      ? "BULLISH_OB"
-      : "BEARISH_OB";
-
-    const expectedFVG = bullish
+  function selectFVG(gaps, bullish) {
+    const expectedType = bullish
       ? "BULLISH_FVG"
       : "BEARISH_FVG";
 
-    const expectedSR = bullish
-      ? "SUPPORT"
-      : "RESISTANCE";
-
-    const latestBreak = getLatest(
-      analysis.structure.fiveM.events,
-      event =>
-        (event.type === "BOS" || event.type === "CHoCH") &&
-        event.direction === trend &&
-        event.confirmation === "CANDLE_CLOSE"
-    );
-
-    const latestSweep = getLatest(
-      analysis.liquidity,
-      sweep =>
-        sweep.type === expectedSweep &&
-        sweep.status === "CONFIRMED"
-    );
-
-    const latestOB = getLatest(
-      analysis.orderBlocks,
-      block =>
-        block.type === expectedOB &&
-        block.status === "CONFIRMED" &&
-        block.validated === true
-    );
-
-    const latestFVG = getLatest(
-      analysis.fvg,
+    return getLatest(
+      gaps,
       gap =>
-        gap.type === expectedFVG &&
+        gap.type === expectedType &&
         gap.status !== "FILLED" &&
-        Number.isFinite(gap.high) &&
-        Number.isFinite(gap.low)
+        isNumber(gap.high) &&
+        isNumber(gap.low) &&
+        gap.high > gap.low
     );
-
-    const currentPrice = analysis.market.currentPrice;
-
-    const qualifiedSR = getNearestLevel(
-      analysis.supportResistance,
-      expectedSR,
-      currentPrice
-    );
-
-    return {
-      trend1H: trend,
-
-      bosConfirmed: Boolean(latestBreak),
-
-      liquiditySweep: latestSweep
-        ? {
-            ...latestSweep,
-            confirmed: true
-          }
-        : null,
-
-      orderBlock: latestOB,
-
-      fvg: latestFVG
-        ? {
-            ...latestFVG,
-            confirmed: true
-          }
-        : null,
-
-      supportResistance: qualifiedSR
-        ? {
-            ...qualifiedSR,
-            touches: qualifiedSR.touchCount,
-            reacted: true
-          }
-        : null,
-
-      entry: tradePlan?.entry,
-      stopLoss: tradePlan?.stopLoss,
-      takeProfit: tradePlan?.takeProfit
-    };
   }
 
-  function validateRisk(strategyResult, riskConfig) {
-    if (strategyResult.signal === "NO TRADE") {
-      return {
-        approved: false,
-        reason: "Strategy conditions were not satisfied."
-      };
+  // ======================================
+  // Entry zone calculation
+  // ======================================
+
+  function buildEntryZone(orderBlock, fvg) {
+    if (!orderBlock || !fvg) {
+      return null;
     }
 
-    if (!riskConfig || typeof riskConfig !== "object") {
-      return {
-        approved: false,
-        reason: "Risk configuration is missing."
-      };
-    }
+    // Use the overlapping price range only.
+    const low = Math.max(
+      orderBlock.low,
+      fvg.low
+    );
 
-    const calculatePositionSize =
-      requireFunction("calculatePositionSize");
+    const high = Math.min(
+      orderBlock.high,
+      fvg.high
+    );
 
-    const sizing = calculatePositionSize({
-      ...riskConfig,
-      entry: strategyResult.entry,
-      stopLoss: strategyResult.stopLoss,
-      maxRiskPercent: CONFIG.maxRiskPercent
-    });
-
-    if (!sizing.valid) {
-      return {
-        approved: false,
-        reason: sizing.reason || "Risk validation failed.",
-        sizing
-      };
+    if (
+      !isNumber(low) ||
+      !isNumber(high) ||
+      low >= high
+    ) {
+      return null;
     }
 
     return {
-      approved: true,
-      sizing
+      low,
+      high,
+      midpoint: (low + high) / 2,
+      source: "OB_FVG_OVERLAP"
     };
   }
+
+  // ======================================
+  // Stop Loss and Take Profit
+  // ======================================
+
+  function buildTradeLevels(
+    entry,
+    zone,
+    bullish
+  ) {
+    if (
+      !isNumber(entry) ||
+      !zone ||
+      !isNumber(zone.low) ||
+      !isNumber(zone.high)
+    ) {
+      return null;
+    }
+
+    const buffer = CONFIG.stopBuffer;
+
+    const stopLoss = bullish
+      ? zone.low - buffer
+      : zone.high + buffer;
+
+    const risk = Math.abs(entry - stopLoss);
+
+    if (!isNumber(risk) || risk <= 0) {
+      return null;
+    }
+
+    const takeProfit = bullish
+      ? entry + risk * CONFIG.minRiskReward
+      : entry - risk * CONFIG.minRiskReward;
+
+    return {
+      entry,
+      stopLoss,
+      takeProfit,
+      riskReward: CONFIG.minRiskReward
+    };
+  }
+
+  // ======================================
+  // Main analysis
+  // ======================================
 
   function analyze(marketData, options = {}) {
     try {
-      if (!marketData || !marketData.timeframes) {
+      const dependencies = getDependencies();
+
+      const {
+        analyzeStructure,
+        detectLiquiditySweeps,
+        detectOrderBlocks,
+        detectFVG,
+        updateFVGStatus,
+        detectSupportResistance,
+        StrategyEngine
+      } = dependencies;
+
+      // Check dependencies.
+      const requiredFunctions = [
+        analyzeStructure,
+        detectLiquiditySweeps,
+        detectOrderBlocks,
+        detectFVG,
+        updateFVGStatus,
+        detectSupportResistance
+      ];
+
+      if (
+        requiredFunctions.some(
+          fn => typeof fn !== "function"
+        ) ||
+        !StrategyEngine ||
+        typeof StrategyEngine.evaluateStrategy !== "function"
+      ) {
+        throw new Error(
+          "One or more analysis engines are not loaded."
+        );
+      }
+
+      if (
+        !marketData ||
+        !marketData.timeframes
+      ) {
         throw new Error("Market data is missing.");
       }
 
-      const nowSeconds = Number.isFinite(options.nowSeconds)
+      const nowSeconds = isNumber(options.nowSeconds)
         ? options.nowSeconds
         : Math.floor(Date.now() / 1000);
 
-      const fiveMData = marketData.timeframes["5M"];
-      const oneHData = marketData.timeframes["1H"];
+      // ----------------------------------
+      // 1. Closed candle data
+      // ----------------------------------
+
+      const fiveMRaw =
+        marketData.timeframes["5M"]?.candles;
+
+      const oneHRaw =
+        marketData.timeframes["1H"]?.candles;
 
       if (
-        !fiveMData ||
-        !oneHData ||
-        !Array.isArray(fiveMData.candles) ||
-        !Array.isArray(oneHData.candles)
+        !Array.isArray(fiveMRaw) ||
+        !Array.isArray(oneHRaw)
       ) {
-        throw new Error("5M or 1H candle data is invalid.");
+        throw new Error(
+          "5M or 1H candle data is missing."
+        );
       }
 
-      // 1. Validate closed candles.
-      const fiveMCandles = getClosedCandles(
-        fiveMData.candles,
+      const fiveM = getClosedCandles(
+        fiveMRaw,
         CONFIG.timeframes["5M"],
         nowSeconds
       );
 
-      const oneHCandles = getClosedCandles(
-        oneHData.candles,
+      const oneH = getClosedCandles(
+        oneHRaw,
         CONFIG.timeframes["1H"],
         nowSeconds
       );
 
-      // 2. Market structure.
-      const analyzeStructure =
-        requireFunction("analyzeStructure");
+      if (
+        fiveM.length < CONFIG.minCandles ||
+        oneH.length < CONFIG.minCandles
+      ) {
+        return noTrade(
+          "Insufficient closed candle history.",
+          {
+            fiveMCount: fiveM.length,
+            oneHCount: oneH.length
+          }
+        );
+      }
 
-      const structure1H = analyzeStructure(
-        oneHData.candles,
-        {
-          timeframeSeconds: CONFIG.timeframes["1H"],
-          nowSeconds
-        }
-      );
+      const latestCandle =
+        fiveM[fiveM.length - 1];
+
+      const currentPrice = latestCandle.close;
+
+      // ----------------------------------
+      // 2. Market structure
+      // ----------------------------------
+
+      const structureOptions = {
+        strength: CONFIG.structureStrength,
+        timeframeSeconds: 300,
+        nowSeconds
+      };
 
       const structure5M = analyzeStructure(
-        fiveMData.candles,
+        fiveM,
+        structureOptions
+      );
+
+      const structure1H = analyzeStructure(
+        oneH,
         {
-          timeframeSeconds: CONFIG.timeframes["5M"],
+          strength: CONFIG.structureStrength,
+          timeframeSeconds: 3600,
           nowSeconds
         }
       );
 
-      // 3. Confirmed swing events.
-      const swingEvents = structure5M.events.filter(event =>
-        (
-          event.type === "SWING_HIGH" ||
-          event.type === "SWING_LOW"
+      const trend1H = structure1H.trend;
+
+      if (
+        !["BULLISH", "BEARISH"].includes(trend1H)
+      ) {
+        return noTrade(
+          "1H market trend is not confirmed.",
+          {
+            structure1H,
+            structure5M
+          }
+        );
+      }
+
+      // Only confirmed swing events are passed
+      // to liquidity and OB engines.
+      const swingEvents = structure5M.swings || [];
+
+      // ----------------------------------
+      // 3. Liquidity sweep
+      // ----------------------------------
+
+      const liquidityResults =
+        detectLiquiditySweeps(
+          fiveM,
+          swingEvents,
+          {
+            nowSeconds,
+            timeframeSeconds: 300
+          }
+        );
+
+      const expectedSweep =
+        trend1H === "BULLISH"
+          ? "SSL_SWEEP"
+          : "BSL_SWEEP";
+
+      const liquiditySweep = getLatest(
+        liquidityResults,
+        item =>
+          item.type === expectedSweep &&
+          item.status === "CONFIRMED"
+      );
+
+      if (!liquiditySweep) {
+        return noTrade(
+          "No matching confirmed liquidity sweep.",
+          {
+            trend1H,
+            liquidity: liquidityResults
+          }
+        );
+      }
+
+      // ----------------------------------
+      // 4. Order Blocks
+      // ----------------------------------
+
+      const orderBlockResults =
+        detectOrderBlocks(
+          fiveM,
+          swingEvents,
+          {
+            lookback: CONFIG.obLookback
+          }
+        );
+
+      const expectedOB =
+        trend1H === "BULLISH"
+          ? "BULLISH_OB"
+          : "BEARISH_OB";
+
+      const orderBlock = getLatest(
+        orderBlockResults,
+        block =>
+          block.type === expectedOB &&
+          validateOrderBlock(block, fiveM)
+      );
+
+      if (!orderBlock) {
+        return noTrade(
+          "No valid, unbroken Order Block.",
+          {
+            trend1H,
+            orderBlocks: orderBlockResults
+          }
+        );
+      }
+
+      // ----------------------------------
+      // 5. Fair Value Gap
+      // ----------------------------------
+
+      const detectedGaps = detectFVG(
+        fiveM,
+        {
+          timeframeSeconds: 300,
+          nowSeconds
+        }
+      );
+
+      const updatedGaps = updateFVGStatus(
+        detectedGaps,
+        fiveM
+      );
+
+      const bullish = trend1H === "BULLISH";
+
+      const fvg = selectFVG(
+        updatedGaps,
+        bullish
+      );
+
+      if (!fvg) {
+        return noTrade(
+          "No matching unfilled FVG.",
+          {
+            trend1H,
+            fvg: updatedGaps
+          }
+        );
+      }
+
+      // ----------------------------------
+      // 6. Support / Resistance
+      // ----------------------------------
+
+      const srResults =
+        detectSupportResistance(
+          fiveM,
+          {
+            minTouches: CONFIG.minSRTouches
+          }
+        );
+
+      const expectedSR = bullish
+        ? "SUPPORT"
+        : "RESISTANCE";
+
+      const supportResistance = getLatest(
+        srResults,
+        level =>
+          level.type === expectedSR &&
+          Array.isArray(level.touches) &&
+          level.touches.length >= CONFIG.minSRTouches
+      );
+
+      if (!supportResistance) {
+        return noTrade(
+          "No support/resistance level with at least 3 confirmed swing reactions.",
+          {
+            supportResistance: srResults
+          }
+        );
+      }
+
+      // ----------------------------------
+      // 7. Confirm market structure break
+      // ----------------------------------
+
+      const lastBreak = structure5M.lastBreak;
+
+      const bosConfirmed = Boolean(
+        lastBreak &&
+        ["BOS", "CHoCH", "INITIAL_BREAK"].includes(
+          lastBreak.type
         ) &&
-        Number.isInteger(event.confirmationIndex) &&
-        Number.isInteger(event.sourceIndex)
+        lastBreak.direction === trend1H &&
+        lastBreak.confirmation === "CANDLE_CLOSE"
       );
 
-      // 4. Liquidity.
-      const detectLiquiditySweeps =
-        requireFunction("detectLiquiditySweeps");
+      if (!bosConfirmed) {
+        return noTrade(
+          "No matching confirmed 5M structure break.",
+          {
+            lastBreak,
+            trend1H
+          }
+        );
+      }
 
-      const liquidity = detectLiquiditySweeps(
-        fiveMData.candles,
-        swingEvents,
-        {
-          nowSeconds,
-          timeframeSeconds: CONFIG.timeframes["5M"]
-        }
+      // ----------------------------------
+      // 8. Build entry zone
+      // ----------------------------------
+
+      const entryZone = buildEntryZone(
+        orderBlock,
+        fvg
       );
 
-      // 5. Order Blocks.
-      const detectOrderBlocks =
-        requireFunction("detectOrderBlocks");
+      if (!entryZone) {
+        return noTrade(
+          "Order Block and FVG do not overlap. No entry zone."
+        );
+      }
 
-      const orderBlocks = detectOrderBlocks(
-        fiveMData.candles,
-        swingEvents
+      // ----------------------------------
+      // 9. Closed-candle market confirmation
+      // ----------------------------------
+
+      const marketConfirmation =
+        currentPrice >= entryZone.low &&
+        currentPrice <= entryZone.high &&
+        (
+          bullish
+            ? latestCandle.close > latestCandle.open
+            : latestCandle.close < latestCandle.open
+        );
+
+      // Planned LIMIT entry = zone midpoint.
+      const plannedEntry = entryZone.midpoint;
+
+      // Determine preliminary execution type.
+      const execution =
+        StrategyEngine.determineExecutionType(
+          {
+            currentPrice,
+            entry: plannedEntry,
+            entryZone,
+            marketConfirmation
+          },
+          bullish
+        );
+
+      if (!execution.valid) {
+        return noTrade(
+          execution.reason,
+          {
+            currentPrice,
+            entryZone,
+            marketConfirmation
+          }
+        );
+      }
+
+      // ----------------------------------
+      // 10. Calculate SL and TP
+      // ----------------------------------
+
+      const levels = buildTradeLevels(
+        execution.entry,
+        entryZone,
+        bullish
       );
 
-      // 6. Fair Value Gaps.
-      const detectFVG = requireFunction("detectFVG");
-      const updateFVGStatus =
-        requireFunction("updateFVGStatus");
+      if (!levels) {
+        return noTrade(
+          "Unable to calculate valid SL and TP."
+        );
+      }
 
-      const detectedFVG = detectFVG(
-        fiveMCandles,
-        {
-          timeframeSeconds: CONFIG.timeframes["5M"],
-          nowSeconds
-        }
-      );
+      // ----------------------------------
+      // 11. Normalize engine outputs
+      // ----------------------------------
 
-      const fvg = updateFVGStatus(
-        detectedFVG,
-        fiveMCandles
-      );
+      const normalizedLiquidity = {
+        ...liquiditySweep,
+        confirmed:
+          liquiditySweep.status === "CONFIRMED"
+      };
 
-      // 7. Support and Resistance.
-      const detectSupportResistance =
-        requireFunction("detectSupportResistance");
+      const normalizedOB = {
+        ...orderBlock,
+        validated: true
+      };
 
-      const supportResistance = detectSupportResistance(
-        fiveMData.candles,
-        {
-          timeframeSeconds: CONFIG.timeframes["5M"],
-          nowSeconds,
-          minTouches: 3
-        }
-      );
+      const normalizedFVG = {
+        ...fvg,
+        confirmed: true
+      };
 
-      const analysis = {
+      const normalizedSR = {
+        ...supportResistance,
+        touches: supportResistance.touches.length,
+        reacted: true
+      };
+
+      // ----------------------------------
+      // 12. Final strategy evaluation
+      // ----------------------------------
+
+      const strategyData = {
+        trend1H,
+        bosConfirmed,
+
+        liquiditySweep: normalizedLiquidity,
+        orderBlock: normalizedOB,
+        fvg: normalizedFVG,
+        supportResistance: normalizedSR,
+
+        currentPrice,
+        entry: plannedEntry,
+        entryZone,
+        marketConfirmation,
+
+        stopLoss: levels.stopLoss,
+        takeProfit: levels.takeProfit
+      };
+
+      const strategyResult =
+        StrategyEngine.evaluateStrategy(
+          strategyData,
+          {
+            minRiskReward: CONFIG.minRiskReward
+          }
+        );
+
+      if (
+        !strategyResult ||
+        strategyResult.signal === "NO TRADE"
+      ) {
+        return noTrade(
+          strategyResult?.reasons?.join(" ") ||
+          "Strategy validation rejected the setup.",
+          {
+            strategyResult,
+            strategyData
+          }
+        );
+      }
+
+      // ----------------------------------
+      // 13. Final output
+      // ----------------------------------
+
+      return {
         success: true,
-        mode: "VALIDATED_ANALYSIS",
+        mode: "LIVE_ANALYSIS",
 
         market: {
           symbol: marketData.symbol || CONFIG.symbol,
-          currentPrice: getLatestPrice(fiveMCandles),
-          fiveMClosedCandles: fiveMCandles.length,
-          oneHClosedCandles: oneHCandles.length,
-          analyzedAt: new Date(nowSeconds * 1000).toISOString()
+          currentPrice,
+          lastClosedCandleTime: latestCandle.time,
+          fiveMCount: fiveM.length,
+          oneHCount: oneH.length
         },
 
-        structure: {
-          oneH: structure1H,
-          fiveM: structure5M
+        signal: {
+          type: strategyResult.signal,
+          direction: strategyResult.direction,
+
+          executionType:
+            strategyResult.executionType,
+
+          executionLabel:
+            strategyResult.executionLabel,
+
+          entry: strategyResult.entry,
+          stopLoss: strategyResult.stopLoss,
+          takeProfit: strategyResult.takeProfit,
+
+          riskReward:
+            strategyResult.riskReward,
+
+          executionReason:
+            strategyResult.executionReason,
+
+          reasons:
+            strategyResult.reasons
         },
 
-        liquidity,
-        orderBlocks,
-        fvg,
-        supportResistance
-      };
-
-      // 8. Strategy evaluation.
-      const evaluateStrategy =
-        requireFunction("evaluateStrategy");
-
-      const tradePlan =
-        marketData.tradePlan || null;
-
-      const strategyInput = buildStrategyInput(
-        analysis,
-        tradePlan
-      );
-
-      const strategyResult = evaluateStrategy(
-        strategyInput,
-        {
-          minRiskReward: CONFIG.minRiskReward
+        diagnostics: {
+          trend1H,
+          lastBreak,
+          liquiditySweep,
+          orderBlock,
+          fvg,
+          supportResistance,
+          entryZone,
+          marketConfirmation
         }
-      );
-
-      // 9. Risk validation.
-      const risk = validateRisk(
-        strategyResult,
-        marketData.riskConfig
-      );
-
-      // 10. Final signal. Fail closed.
-      if (
-        strategyResult.signal === "NO TRADE" ||
-        !risk.approved
-      ) {
-        analysis.signal = {
-          type: "NO TRADE",
-          direction: "NONE",
-          reason: !risk.approved
-            ? risk.reason
-            : strategyResult.reasons.join("; "),
-          strategyReasons: strategyResult.reasons,
-          riskApproved: false
-        };
-
-        return analysis;
-      }
-
-      analysis.signal = {
-        type: strategyResult.signal,
-        direction: strategyResult.direction,
-        entry: strategyResult.entry,
-        stopLoss: strategyResult.stopLoss,
-        takeProfit: strategyResult.takeProfit,
-        riskReward: strategyResult.riskReward,
-        riskApproved: true,
-        positionSize: risk.sizing,
-        reasons: strategyResult.reasons
       };
-
-      return analysis;
 
     } catch (error) {
-      console.error("Analysis Engine Error:", error);
+      console.error(
+        "Analysis Engine Error:",
+        error
+      );
 
       return {
         success: false,
         mode: "ERROR",
+
         signal: {
           type: "NO TRADE",
           direction: "NONE",
+          executionType: null,
           reason: error.message
         }
       };
@@ -487,12 +834,12 @@ const AnalysisEngine = (() => {
 
 })();
 
-// Browser access.
+// Browser
 if (typeof window !== "undefined") {
   window.AnalysisEngine = AnalysisEngine;
 }
 
-// Node.js access.
+// Node.js
 if (typeof module !== "undefined") {
   module.exports = AnalysisEngine;
 }

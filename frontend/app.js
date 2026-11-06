@@ -62,7 +62,39 @@ const App = {
     this.elements.details.textContent =
       "Trading signals are disabled during diagnostic testing.";
 
-    this.elements.diagnostics.textContent =
+    const recentSweeps = analysis.liquidity.slice(-5);
+
+const sweepDetails = recentSweeps.map((sweep, index) => {
+  const candle = fiveM.candles[sweep.sweepIndex];
+
+  if (!candle) {
+    return `${index + 1}. Invalid candle index`;
+  }
+
+  return [
+    `${index + 1}. ${sweep.type}`,
+    `Level: ${sweep.level}`,
+    `High: ${candle.high}`,
+    `Low: ${candle.low}`,
+    `Close: ${candle.close}`,
+    `Wick: ${sweep.wickPrice}`,
+    `Wick Ratio: ${(sweep.wickRatio * 100).toFixed(1)}%`,
+    `Candle Index: ${sweep.sweepIndex}`
+  ].join(" | ");
+}).join("\n");
+
+this.elements.diagnostics.textContent =
+  "Analysis: SUCCESS\n" +
+  "5M Candles: " + fiveM.candles.length + "\n" +
+  "1H Candles: " + oneH.candles.length + "\n" +
+  "5M Confirmed Swings: " +
+  (structure5M.swings?.length || 0) + "\n" +
+  "Liquidity Sweeps: " + liquidityCount + "\n" +
+  "Order Blocks: " + obCount + "\n" +
+  "FVG Zones: " + fvgCount + "\n" +
+  "Support / Resistance: " + srCount + "\n\n" +
+  "LAST 5 LIQUIDITY SWEEPS:\n" +
+  (sweepDetails || "No confirmed sweeps");
       "Waiting for SMC analysis...";
   },
 

@@ -4,7 +4,7 @@
 // ======================================
 // AI GOLD SIGNALS
 // Frontend Application
-// Central SMC Analysis Integration
+// SMC Diagnostic Display
 // ======================================
 
 const App = {
@@ -27,7 +27,8 @@ const App = {
       price: document.getElementById("gold-price"),
       structure: document.getElementById("market-structure"),
       signal: document.getElementById("signal"),
-      details: document.getElementById("signal-details")
+      details: document.getElementById("signal-details"),
+      diagnostics: document.getElementById("smc-diagnostics")
     };
 
     this.renderStatus();
@@ -39,13 +40,16 @@ const App = {
       "Connecting to XAUS...";
 
     this.elements.structure.textContent =
-      "Loading 1H and 5M analysis...";
+      "Loading market structure...";
 
     this.elements.signal.textContent =
       "NO TRADE";
 
     this.elements.details.textContent =
-      "Waiting for verified SMC analysis.";
+      "Trading signals are disabled during diagnostic testing.";
+
+    this.elements.diagnostics.textContent =
+      "Waiting for SMC analysis...";
   },
 
   async loadMarketData() {
@@ -87,16 +91,15 @@ const App = {
         " | Latest 1H: " +
         latest1H.close.toFixed(2);
 
-      // Run central SMC analysis
       const analysis =
         window.AnalysisEngine.analyze(result);
 
       this.state.analysis = analysis;
 
-      if (!analysis.success) {
+      if (!analysis || !analysis.success) {
         throw new Error(
-          analysis.signal?.reason ||
-          "Analysis failed."
+          analysis?.signal?.reason ||
+          "SMC analysis failed."
         );
       }
 
@@ -110,15 +113,30 @@ const App = {
         "1H Trend: " +
         (structure1H.trend || "UNCONFIRMED") +
         " | 5M Trend: " +
-        (structure5M.trend || "UNCONFIRMED") +
-        " | Liquidity Sweeps: " +
-        analysis.liquidity.length +
-        " | Order Blocks: " +
-        analysis.orderBlocks.length +
-        " | FVG: " +
-        analysis.fvg.length +
-        " | S/R Levels: " +
-        analysis.supportResistance.length;
+        (structure5M.trend || "UNCONFIRMED");
+
+      const liquidityCount =
+        Array.isArray(analysis.liquidity)
+          ? analysis.liquidity.length : 0;
+
+      const obCount =
+        Array.isArray(analysis.orderBlocks)
+          ? analysis.orderBlocks.length : 0;
+
+      const fvgCount =
+        Array.isArray(analysis.fvg)
+          ? analysis.fvg.length : 0;
+
+      const srCount =
+        Array.isArray(analysis.supportResistance)
+          ? analysis.supportResistance.length : 0;
+
+      this.elements.diagnostics.textContent =
+        "Analysis: SUCCESS\n" +
+        "Liquidity Sweeps: " + liquidityCount + "\n" +
+        "Order Blocks: " + obCount + "\n" +
+        "FVG Zones: " + fvgCount + "\n" +
+        "Support / Resistance: " + srCount;
 
       // Trading signals remain disabled
       this.state.signal = "NO TRADE";
@@ -127,33 +145,21 @@ const App = {
         "NO TRADE";
 
       this.elements.details.textContent =
-        "SMC diagnostic analysis completed. " +
-        "LIMIT and MARKET entry selection is not enabled yet.";
+        "Diagnostic mode only. No verified trading signal.";
 
       console.log(
-        "AI GOLD SIGNALS - Analysis Results:",
+        "SMC Diagnostic Results:",
         analysis
       );
 
-     this.elements.details.textContent =
-  "Analysis: " + (analysis.success ? "SUCCESS" : "FAILED") +
-  "\nTrend 1H: " + analysis.structure.oneH.trend +
-  "\nTrend 5M: " + analysis.structure.fiveM.trend +
-  "\nLiquidity: " + analysis.liquidity.length +
-  "\nOrder Blocks: " + analysis.orderBlocks.length +
-  "\nFVG: " + analysis.fvg.length +
-  "\nS/R: " + analysis.supportResistance.length; 
     } catch (error) {
-      console.error(
-        "AI GOLD SIGNALS Error:",
-        error
-      );
-
-      this.elements.price.textContent =
-        "DATA / ANALYSIS ERROR";
+      console.error("AI GOLD SIGNALS:", error);
 
       this.elements.structure.textContent =
-        error.message;
+        "Analysis error";
+
+      this.elements.diagnostics.textContent =
+        "ERROR: " + error.message;
 
       this.elements.signal.textContent =
         "NO TRADE";

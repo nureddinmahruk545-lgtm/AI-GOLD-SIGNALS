@@ -3,27 +3,37 @@
 
 // ======================================
 // AI GOLD SIGNALS
-// Frontend Application V3
-// Connection Status + SMC Diagnostics
+// Frontend Application V4
+// SMC / ICT Trading Dashboard
+// LIMIT + MARKET Execution
 // ======================================
 
 const App = {
+
   config: {
     symbol: "XAUUSD",
     mainTimeframe: "1H",
     entryTimeframe: "5M",
-    connectionTimeout: 15000
+    connectionTimeout: 15000,
+    refreshInterval: 30000
   },
 
   state: {
     marketData: null,
     analysis: null,
-    signal: "NO TRADE"
+    signal: "NO TRADE",
+    refreshTimer: null,
+    isLoading: false
   },
 
   elements: {},
 
+  // ======================================
+  // Initialize
+  // ======================================
+
   init() {
+
     this.elements = {
       price: document.getElementById("gold-price"),
       connection: document.getElementById("connection-status"),
@@ -33,22 +43,35 @@ const App = {
       diagnostics: document.getElementById("smc-diagnostics")
     };
 
-    const missingElements = Object.entries(this.elements)
+    const missing = Object.entries(this.elements)
       .filter(([, element]) => !element)
       .map(([name]) => name);
 
-    if (missingElements.length > 0) {
-      console.error("Missing HTML elements:", missingElements);
+    if (missing.length) {
+      console.error(
+        "Missing HTML elements:",
+        missing
+      );
       return;
     }
 
-    this.renderStatus();
+    this.renderInitialState();
     this.loadMarketData();
+
+    // Refresh market data periodically.
+    this.state.refreshTimer = setInterval(() => {
+      this.loadMarketData();
+    }, this.config.refreshInterval);
   },
 
-  renderStatus() {
+  // ======================================
+  // Initial UI
+  // ======================================
+
+  renderInitialState() {
+
     this.elements.connection.textContent =
-      "Connecting to XAUS...";
+      "CONNECTING...";
 
     this.elements.price.textContent =
       "Waiting for market data...";
@@ -60,32 +83,107 @@ const App = {
       "NO TRADE";
 
     this.elements.details.textContent =
-      "Diagnostic mode only. Trading signals are disabled.";
+      "Waiting for analysis...";
 
     this.elements.diagnostics.textContent =
-      "Waiting for SMC analysis...";
+      "Waiting for SMC diagnostics...";
   },
 
+  // ======================================
+  // Format helpers
+  // ======================================
+
+  formatPrice(value) {
+
+    if (
+      typeof value !== "number" ||
+      !Number.isFinite(value)
+    ) {
+      return "N/A";
+    }
+
+    return value.toFixed(2);
+  },
+
+  formatRR(value) {
+
+    if (
+      typeof value !== "number" ||
+      !Number.isFinite(value)
+    ) {
+      return "N/A";
+    }
+
+    return "1:" + value.toFixed(2);
+  },
+
+  formatTime(timestamp) {
+
+    if (
+      typeof timestamp !== "number" ||
+      !Number.isFinite(timestamp)
+    ) {
+      return "N/A";
+    }
+
+    return new Date(timestamp * 1000)
+      .toLocaleString();
+  },
+
+  // ======================================
+  // Connection status
+  // ======================================
+
+  setConnectionStatus(message) {
+    this.elements.connection.textContent = message;
+  },
+
+  // ======================================
+  // Market data
+  // ======================================
+
   async loadMarketData() {
+
+    if (this.state.isLoading) {
+      return;
+    }
+
+    this.state.isLoading = true;
+
     let timeoutId;
 
     try {
+
       if (!window.MarketData) {
-        throw new Error("MarketData engine not loaded.");
+        throw new Error(
+          "MarketData engine not loaded."
+        );
       }
 
-      if (!window.AnalysisEngine) {
-        throw new Error("Analysis Engine not loaded.");
+      if (
+        !window.AnalysisEngine ||
+        typeof window.AnalysisEngine.analyze !== "function"
+      ) {
+        throw new Error(
+          "AnalysisEngine not loaded."
+        );
       }
 
-      this.elements.connection.textContent =
-        "Requesting XAUS market data...";
+      this.setConnectionStatus(
+        "REQUESTING MARKET DATA..."
+      );
 
-      const timeoutPromise = new Promise((resolve, reject) => {
-        timeoutId = setTimeout(() => {
-          reject(new Error("XAUS request timed out after 15 seconds."));
-        }, this.config.connectionTimeout);
-      });
+      const timeoutPromise = new Promise(
+        (resolve, reject) => {
+          timeoutId = setTimeout(() => {
+            reject(
+              new Error(
+                "Market data request timed out."
+              )
+            );
+          }, this.config.connectionTimeout);
+        }
+      );
 
       const result = await Promise.race([
         window.MarketData.getMarketData(),
@@ -94,156 +192,541 @@ const App = {
 
       clearTimeout(timeoutId);
 
-      if (
-        !result ||
-        !result.timeframes ||
-        !result.timeframes["5M"] ||
-        !result.timeframes["1H"]
-      ) {
-        throw new Error("Invalid XAUS market data structure.");
-      }
+      this.validateMarketData(result);
+
+      this.state.marketData = result;
 
       const fiveM = result.timeframes["5M"];
       const oneH = result.timeframes["1H"];
 
-      if (
-        !Array.isArray(fiveM.candles) ||
-        !Array.isArray(oneH.candles) ||
-        fiveM.candles.length === 0 ||
-        oneH.candles.length === 0
-      ) {
-        throw new Error("No valid market candles received.");
-      }
+      const latest5M =
+        fiveM.candles[fiveM.candles.length - 1];
 
-      this.state.marketData = result;
+      const latest1H =
+        oneH.candles[oneH.candles.length - 1];
 
-      const latest5M = fiveM.candles[fiveM.candles.length - 1];
-      const latest1H = oneH.candles[oneH.candles.length - 1];
-
-      this.elements.connection.textContent =
-        "CONNECTED · XAUS data received";
+      this.setConnectionStatus(
+        "CONNECTED · " + this.config.symbol
+      );
 
       this.elements.price.textContent =
-        "Latest 5M: " + latest5M.close.toFixed(2) +
-        " | Latest 1H: " + latest1H.close.toFixed(2);
+        "5M: " + this.formatPrice(latest5M.close) +
+        " | 1H: " + this.formatPrice(latest1H.close);
+
+      // ==================================
+      // Run analysis
+      // ==================================
 
       this.elements.structure.textContent =
-        "Market data received. Running SMC analysis...";
+        "Running SMC / ICT analysis...";
 
-      const analysis = window.AnalysisEngine.analyze(result);
+      const analysis =
+        window.AnalysisEngine.analyze(result);
 
       this.state.analysis = analysis;
 
-      if (!analysis || !analysis.success) {
+      if (!analysis) {
         throw new Error(
-          analysis?.signal?.reason || "SMC analysis failed."
+          "Analysis engine returned empty result."
         );
       }
 
-      const structure1H = analysis.structure?.oneH;
-      const structure5M = analysis.structure?.fiveM;
-
-      if (!structure1H || !structure5M) {
-        throw new Error("Market structure data is incomplete.");
+      if (
+        analysis.success !== true &&
+        analysis.mode !== "ERROR"
+      ) {
+        throw new Error(
+          analysis.signal?.reason ||
+          "Analysis failed."
+        );
       }
 
-      this.elements.structure.textContent =
-        "1H Trend: " + (structure1H.trend || "UNCONFIRMED") +
-        " | 5M Trend: " + (structure5M.trend || "UNCONFIRMED");
+      if (analysis.mode === "ERROR") {
+        throw new Error(
+          analysis.signal?.reason ||
+          "Analysis engine error."
+        );
+      }
 
-      const liquidity = Array.isArray(analysis.liquidity)
-        ? analysis.liquidity
-        : [];
+      this.renderAnalysis(analysis);
 
-      const orderBlocks = Array.isArray(analysis.orderBlocks)
-        ? analysis.orderBlocks
-        : [];
+      console.log(
+        "Market Data:",
+        result
+      );
 
-      const fvg = Array.isArray(analysis.fvg)
-        ? analysis.fvg
-        : [];
-
-      const supportResistance = Array.isArray(analysis.supportResistance)
-        ? analysis.supportResistance
-        : [];
-
-      const recentSweeps = [...liquidity]
-        .filter(sweep => Number.isInteger(sweep.sweepIndex))
-        .sort((a, b) => b.sweepIndex - a.sweepIndex)
-        .slice(0, 5);
-
-      const sweepDetails = recentSweeps.map((sweep, index) => {
-        const candle = fiveM.candles[sweep.sweepIndex];
-
-        if (!candle) {
-          return `${index + 1}. Invalid candle index: ${sweep.sweepIndex}`;
-        }
-
-        return [
-          `${index + 1}. ${sweep.type || "UNKNOWN"}`,
-          `Level: ${sweep.level}`,
-          `High: ${candle.high}`,
-          `Low: ${candle.low}`,
-          `Close: ${candle.close}`,
-          `Wick: ${sweep.wickPrice}`,
-          `Wick Ratio: ${Number.isFinite(sweep.wickRatio)
-            ? (sweep.wickRatio * 100).toFixed(1) + "%"
-            : "N/A"}`,
-          `Candle Index: ${sweep.sweepIndex}`
-        ].join(" | ");
-      }).join("\n");
-
-      this.elements.diagnostics.textContent =
-        "Analysis: SUCCESS\n" +
-        "5M Candles: " + fiveM.candles.length + "\n" +
-        "1H Candles: " + oneH.candles.length + "\n" +
-        "5M Confirmed Swings: " +
-        (structure5M.swings?.length || 0) + "\n" +
-        "Liquidity Sweeps: " + liquidity.length + "\n" +
-        "Order Blocks: " + orderBlocks.length + "\n" +
-        "FVG Zones: " + fvg.length + "\n" +
-        "Support / Resistance: " + supportResistance.length +
-        "\n\nLAST 5 LIQUIDITY SWEEPS:\n" +
-        (sweepDetails || "No confirmed sweeps");
-
-      this.state.signal = "NO TRADE";
-
-      this.elements.signal.textContent = "NO TRADE";
-
-      this.elements.details.textContent =
-        "Diagnostic mode only. No verified trading signal.";
-
-      console.log("Market Data:", result);
-      console.log("SMC Diagnostic Results:", analysis);
-      console.table(recentSweeps);
+      console.log(
+        "Analysis Result:",
+        analysis
+      );
 
     } catch (error) {
+
       if (timeoutId) {
         clearTimeout(timeoutId);
       }
 
-      console.error("AI GOLD SIGNALS:", error);
+      console.error(
+        "AI GOLD SIGNALS:",
+        error
+      );
 
-      this.elements.connection.textContent =
-        "CONNECTION / ANALYSIS ERROR";
+      this.renderError(error);
 
-      this.elements.price.textContent =
-        "Market data unavailable";
+    } finally {
 
-      this.elements.structure.textContent =
-        "Analysis unavailable";
+      this.state.isLoading = false;
 
-      this.elements.diagnostics.textContent =
-        "ERROR: " + error.message;
+    }
+  },
 
-      this.elements.signal.textContent = "NO TRADE";
+  // ======================================
+  // Validate market data
+  // ======================================
+
+  validateMarketData(result) {
+
+    if (
+      !result ||
+      !result.timeframes ||
+      !result.timeframes["5M"] ||
+      !result.timeframes["1H"]
+    ) {
+      throw new Error(
+        "Invalid market data structure."
+      );
+    }
+
+    const fiveM = result.timeframes["5M"].candles;
+    const oneH = result.timeframes["1H"].candles;
+
+    if (
+      !Array.isArray(fiveM) ||
+      !Array.isArray(oneH) ||
+      fiveM.length === 0 ||
+      oneH.length === 0
+    ) {
+      throw new Error(
+        "No market candles received."
+      );
+    }
+
+    const latest5M = fiveM[fiveM.length - 1];
+    const latest1H = oneH[oneH.length - 1];
+
+    if (
+      !Number.isFinite(latest5M.close) ||
+      !Number.isFinite(latest1H.close)
+    ) {
+      throw new Error(
+        "Invalid market prices."
+      );
+    }
+  },
+
+  // ======================================
+  // Render analysis
+  // ======================================
+
+  renderAnalysis(analysis) {
+
+    const signal = analysis.signal || {};
+    const diagnostics = analysis.diagnostics || {};
+
+    this.renderMarketStructure(
+      diagnostics,
+      analysis
+    );
+
+    this.renderSignal(signal);
+
+    this.renderDiagnostics(
+      diagnostics,
+      analysis
+    );
+
+    this.state.signal =
+      signal.type || "NO TRADE";
+  },
+
+  // ======================================
+  // Market structure display
+  // ======================================
+
+  renderMarketStructure(diagnostics, analysis) {
+
+    const trend =
+      diagnostics.trend1H || "UNCONFIRMED";
+
+    const lastBreak =
+      diagnostics.lastBreak;
+
+    const breakType =
+      lastBreak?.type || "NONE";
+
+    const breakDirection =
+      lastBreak?.direction || "NONE";
+
+    const marketPrice =
+      analysis.market?.currentPrice;
+
+    this.elements.structure.textContent =
+      "1H Trend: " + trend +
+      " | 5M Break: " + breakType +
+      " | Break Direction: " + breakDirection +
+      " | Price: " + this.formatPrice(marketPrice);
+  },
+
+  // ======================================
+  // Signal display
+  // ======================================
+
+  renderSignal(signal) {
+
+    const signalType =
+      signal.type || "NO TRADE";
+
+    this.elements.signal.textContent =
+      signalType;
+
+    // Clear old visual classes.
+    this.elements.signal.classList.remove(
+      "buy",
+      "sell",
+      "no-trade",
+      "limit",
+      "market"
+    );
+
+    if (signalType === "BUY") {
+
+      this.elements.signal.classList.add("buy");
+
+    } else if (signalType === "SELL") {
+
+      this.elements.signal.classList.add("sell");
+
+    } else {
+
+      this.elements.signal.classList.add("no-trade");
+
+    }
+
+    if (signal.executionType === "LIMIT") {
+      this.elements.signal.classList.add("limit");
+    }
+
+    if (signal.executionType === "MARKET") {
+      this.elements.signal.classList.add("market");
+    }
+
+    // No trade
+    if (signalType === "NO TRADE") {
+
+      const reason =
+        signal.reason ||
+        "No valid trading opportunity.";
 
       this.elements.details.textContent =
-        "No verified trading signal available.";
+        "STATUS: NO TRADE\n\n" +
+        "Reason: " + reason;
 
-      this.state.signal = "NO TRADE";
+      return;
     }
+
+    // Valid signal
+    const execution =
+      signal.executionLabel ||
+      signalType + " " + signal.executionType;
+
+    const details = [
+      "SIGNAL: " + signalType,
+      "EXECUTION: " + execution,
+      "",
+      "ENTRY: " + this.formatPrice(signal.entry),
+      "STOP LOSS: " + this.formatPrice(signal.stopLoss),
+      "TAKE PROFIT: " + this.formatPrice(signal.takeProfit),
+      "RISK / REWARD: " + this.formatRR(signal.riskReward),
+      "",
+      "EXECUTION REASON:",
+      signal.executionReason || "N/A",
+      "",
+      "VALIDATION:"
+    ];
+
+    if (Array.isArray(signal.reasons)) {
+
+      signal.reasons.forEach((reason, index) => {
+        details.push(
+          (index + 1) + ". " + reason
+        );
+      });
+
+    }
+
+    this.elements.details.textContent =
+      details.join("\n");
+  },
+
+  // ======================================
+  // SMC diagnostics
+  // ======================================
+
+  renderDiagnostics(diagnostics, analysis) {
+
+    const lines = [];
+
+    const market = analysis.market || {};
+
+    lines.push(
+      "ANALYSIS MODE: " + (analysis.mode || "UNKNOWN")
+    );
+
+    lines.push(
+      "SYMBOL: " + (market.symbol || this.config.symbol)
+    );
+
+    lines.push(
+      "CURRENT PRICE: " +
+      this.formatPrice(market.currentPrice)
+    );
+
+    lines.push(
+      "LAST CLOSED 5M CANDLE: " +
+      this.formatTime(market.lastClosedCandleTime)
+    );
+
+    lines.push("");
+
+    lines.push("MARKET STRUCTURE");
+
+    lines.push(
+      "1H TREND: " +
+      (diagnostics.trend1H || "UNKNOWN")
+    );
+
+    lines.push(
+      "5M BREAK: " +
+      (diagnostics.lastBreak?.type || "NONE")
+    );
+
+    lines.push(
+      "BREAK DIRECTION: " +
+      (diagnostics.lastBreak?.direction || "NONE")
+    );
+
+    lines.push("");
+
+    lines.push("LIQUIDITY");
+
+    if (diagnostics.liquiditySweep) {
+
+      lines.push(
+        "TYPE: " +
+        diagnostics.liquiditySweep.type
+      );
+
+      lines.push(
+        "STATUS: " +
+        (
+          diagnostics.liquiditySweep.status ||
+          "UNKNOWN"
+        )
+      );
+
+      lines.push(
+        "LEVEL: " +
+        this.formatPrice(
+          diagnostics.liquiditySweep.level
+        )
+      );
+
+    } else {
+
+      lines.push("No matching confirmed sweep.");
+
+    }
+
+    lines.push("");
+
+    lines.push("ORDER BLOCK");
+
+    if (diagnostics.orderBlock) {
+
+      lines.push(
+        "TYPE: " +
+        diagnostics.orderBlock.type
+      );
+
+      lines.push(
+        "LOW: " +
+        this.formatPrice(
+          diagnostics.orderBlock.low
+        )
+      );
+
+      lines.push(
+        "HIGH: " +
+        this.formatPrice(
+          diagnostics.orderBlock.high
+        )
+      );
+
+    } else {
+
+      lines.push("No valid Order Block.");
+
+    }
+
+    lines.push("");
+
+    lines.push("FAIR VALUE GAP");
+
+    if (diagnostics.fvg) {
+
+      lines.push(
+        "TYPE: " + diagnostics.fvg.type
+      );
+
+      lines.push(
+        "STATUS: " + diagnostics.fvg.status
+      );
+
+      lines.push(
+        "LOW: " +
+        this.formatPrice(diagnostics.fvg.low)
+      );
+
+      lines.push(
+        "HIGH: " +
+        this.formatPrice(diagnostics.fvg.high)
+      );
+
+    } else {
+
+      lines.push("No valid FVG.");
+
+    }
+
+    lines.push("");
+
+    lines.push("SUPPORT / RESISTANCE");
+
+    if (diagnostics.supportResistance) {
+
+      const sr = diagnostics.supportResistance;
+
+      lines.push(
+        "TYPE: " + sr.type
+      );
+
+      lines.push(
+        "LEVEL: " +
+        this.formatPrice(sr.level)
+      );
+
+      lines.push(
+        "TOUCHES: " +
+        (
+          Array.isArray(sr.touches)
+            ? sr.touches.length
+            : "N/A"
+        )
+      );
+
+    } else {
+
+      lines.push("No qualified level.");
+
+    }
+
+    lines.push("");
+
+    lines.push("ENTRY ZONE");
+
+    if (diagnostics.entryZone) {
+
+      lines.push(
+        "LOW: " +
+        this.formatPrice(diagnostics.entryZone.low)
+      );
+
+      lines.push(
+        "HIGH: " +
+        this.formatPrice(diagnostics.entryZone.high)
+      );
+
+      lines.push(
+        "MIDPOINT: " +
+        this.formatPrice(diagnostics.entryZone.midpoint)
+      );
+
+    } else {
+
+      lines.push("No valid entry zone.");
+
+    }
+
+    lines.push("");
+
+    lines.push(
+      "MARKET CONFIRMATION: " +
+      (
+        diagnostics.marketConfirmation === true
+          ? "CONFIRMED"
+          : "NOT CONFIRMED"
+      )
+    );
+
+    this.elements.diagnostics.textContent =
+      lines.join("\n");
+  },
+
+  // ======================================
+  // Error display
+  // ======================================
+
+  renderError(error) {
+
+    this.setConnectionStatus(
+      "CONNECTION / ANALYSIS ERROR"
+    );
+
+    this.elements.price.textContent =
+      "Market data unavailable.";
+
+    this.elements.structure.textContent =
+      "Analysis unavailable.";
+
+    this.elements.signal.textContent =
+      "NO TRADE";
+
+    this.elements.signal.classList.remove(
+      "buy",
+      "sell",
+      "limit",
+      "market"
+    );
+
+    this.elements.signal.classList.add(
+      "no-trade"
+    );
+
+    this.elements.details.textContent =
+      "No verified trading signal available.";
+
+    this.elements.diagnostics.textContent =
+      "ERROR:\n" + error.message;
+
+    this.state.signal = "NO TRADE";
   }
 };
 
-document.addEventListener("DOMContentLoaded", () => App.init());
+// ======================================
+// Start application
+// ======================================
+
+document.addEventListener(
+  "DOMContentLoaded",
+  () => App.init()
+);

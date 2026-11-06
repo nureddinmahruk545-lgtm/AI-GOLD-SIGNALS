@@ -4,7 +4,7 @@
 // ======================================
 // AI GOLD SIGNALS
 // Frontend Application
-// Market Data Connection Test
+// Central SMC Analysis Integration
 // ======================================
 
 const App = {
@@ -16,7 +16,8 @@ const App = {
 
   state: {
     marketData: null,
-    signal: "NO DATA"
+    analysis: null,
+    signal: "NO TRADE"
   },
 
   elements: {},
@@ -34,62 +35,128 @@ const App = {
   },
 
   renderStatus() {
-    this.elements.price.textContent = "Connecting to XAUS...";
-    this.elements.structure.textContent = "Loading 1H and 5M candles...";
-    this.elements.signal.textContent = "NO DATA";
+    this.elements.price.textContent =
+      "Connecting to XAUS...";
+
+    this.elements.structure.textContent =
+      "Loading 1H and 5M analysis...";
+
+    this.elements.signal.textContent =
+      "NO TRADE";
+
     this.elements.details.textContent =
-      "Testing market data. No trading signals are enabled.";
+      "Waiting for verified SMC analysis.";
   },
 
   async loadMarketData() {
     try {
       if (!window.MarketData) {
-        throw new Error("MarketData engine not loaded. Check script path.");
+        throw new Error("MarketData engine not loaded.");
       }
 
-      const result = await window.MarketData.getMarketData();
+      if (!window.AnalysisEngine) {
+        throw new Error("Analysis Engine not loaded.");
+      }
+
+      const result =
+        await window.MarketData.getMarketData();
 
       const fiveM = result.timeframes["5M"];
       const oneH = result.timeframes["1H"];
 
-      if (!fiveM.candles.length || !oneH.candles.length) {
-        throw new Error("No valid candles received.");
+      if (
+        !fiveM ||
+        !oneH ||
+        !fiveM.candles.length ||
+        !oneH.candles.length
+      ) {
+        throw new Error("Invalid market candle data.");
       }
 
       this.state.marketData = result;
 
-      const latest5M = fiveM.candles[fiveM.candles.length - 1];
-      const latest1H = oneH.candles[oneH.candles.length - 1];
+      const latest5M =
+        fiveM.candles[fiveM.candles.length - 1];
+
+      const latest1H =
+        oneH.candles[oneH.candles.length - 1];
 
       this.elements.price.textContent =
-        "Latest 5M close: " + latest5M.close.toFixed(2) +
-        " | Latest 1H close: " + latest1H.close.toFixed(2);
+        "Latest 5M: " +
+        latest5M.close.toFixed(2) +
+        " | Latest 1H: " +
+        latest1H.close.toFixed(2);
+
+      // Run central SMC analysis
+      const analysis =
+        window.AnalysisEngine.analyze(result);
+
+      this.state.analysis = analysis;
+
+      if (!analysis.success) {
+        throw new Error(
+          analysis.signal?.reason ||
+          "Analysis failed."
+        );
+      }
+
+      const structure1H =
+        analysis.structure.oneH;
+
+      const structure5M =
+        analysis.structure.fiveM;
 
       this.elements.structure.textContent =
-        "5M candles: " + fiveM.count +
-        " | 1H candles: " + oneH.count +
-        " | Data source: " + result.timeframes["5M"].source;
+        "1H Trend: " +
+        (structure1H.trend || "UNCONFIRMED") +
+        " | 5M Trend: " +
+        (structure5M.trend || "UNCONFIRMED") +
+        " | Liquidity Sweeps: " +
+        analysis.liquidity.length +
+        " | Order Blocks: " +
+        analysis.orderBlocks.length +
+        " | FVG: " +
+        analysis.fvg.length +
+        " | S/R Levels: " +
+        analysis.supportResistance.length;
 
-      this.elements.signal.textContent = "NO TRADE";
+      // Trading signals remain disabled
+      this.state.signal = "NO TRADE";
+
+      this.elements.signal.textContent =
+        "NO TRADE";
 
       this.elements.details.textContent =
-        "Market data received successfully. " +
-        "Signal generation remains disabled until SMC analysis is verified.";
+        "SMC diagnostic analysis completed. " +
+        "LIMIT and MARKET entry selection is not enabled yet.";
 
-      console.log("Market data test successful:", result);
+      console.log(
+        "AI GOLD SIGNALS - Analysis Results:",
+        analysis
+      );
 
     } catch (error) {
-      console.error("Market data error:", error);
+      console.error(
+        "AI GOLD SIGNALS Error:",
+        error
+      );
 
-      this.elements.price.textContent = "DATA CONNECTION ERROR";
-      this.elements.structure.textContent = error.message;
-      this.elements.signal.textContent = "NO DATA";
+      this.elements.price.textContent =
+        "DATA / ANALYSIS ERROR";
+
+      this.elements.structure.textContent =
+        error.message;
+
+      this.elements.signal.textContent =
+        "NO TRADE";
+
       this.elements.details.textContent =
-        "No trading signal. Check the data provider and browser console.";
+        "No verified trading signal available.";
     }
   }
 };
 
-document.addEventListener("DOMContentLoaded", () => {
-  App.init();
-});
+document.addEventListener(
+  "DOMContentLoaded",
+  () => App.init()
+);

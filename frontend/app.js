@@ -135,6 +135,8 @@ const App = {
         analysis
       );
 
+      this.elements.details.textContent =
+  JSON.stringify(analysis, null, 2);
     } catch (error) {
       console.error(
         "AI GOLD SIGNALS Error:",

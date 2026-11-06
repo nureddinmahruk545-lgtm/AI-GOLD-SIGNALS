@@ -136,7 +136,7 @@ const App = {
       );
 
       this.elements.details.textContent =
-  JSON.stringify(analysis, null, 2);
+  "JSON TEST: " + JSON.stringify(analysis);
     } catch (error) {
       console.error(
         "AI GOLD SIGNALS Error:",

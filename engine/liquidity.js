@@ -1,9 +1,11 @@
+
 "use strict";
 
 // ======================================
 // AI GOLD SIGNALS
-// Liquidity Detection Engine V3
-// Confirmed Swing + Closed Candle Sweeps
+// Liquidity Detection Engine V4
+// Confirmed Swings + Closed Candle Sweeps
+// Breakout Invalidation Protection
 // ======================================
 
 function detectLiquiditySweeps(candles, swingEvents, options = {}) {
@@ -35,24 +37,43 @@ function detectLiquiditySweeps(candles, swingEvents, options = {}) {
     ? Math.max(0, options.minSweepDistance)
     : 0;
 
+  if (
+    !Number.isFinite(nowSeconds) ||
+    !Number.isFinite(timeframeSeconds) ||
+    timeframeSeconds <= 0
+  ) {
+    return [];
+  }
+
+  // ======================================
+  // 1. Identify valid closed candles
+  // ======================================
+
   const closedIndexes = [];
 
-  // Identify closed candles using their timestamps.
   for (let i = 0; i < candles.length; i++) {
     const candle = candles[i];
 
     if (
-      candle &&
-      Number.isFinite(candle.time) &&
-      candle.time + timeframeSeconds <= nowSeconds &&
-      Number.isFinite(candle.open) &&
-      Number.isFinite(candle.high) &&
-      Number.isFinite(candle.low) &&
-      Number.isFinite(candle.close) &&
+      !candle ||
+      !Number.isFinite(candle.time) ||
+      !Number.isFinite(candle.open) ||
+      !Number.isFinite(candle.high) ||
+      !Number.isFinite(candle.low) ||
+      !Number.isFinite(candle.close)
+    ) {
+      continue;
+    }
+
+    const validOHLC =
       candle.high >= candle.low &&
       candle.high >= Math.max(candle.open, candle.close) &&
-      candle.low <= Math.min(candle.open, candle.close)
-    ) {
+      candle.low <= Math.min(candle.open, candle.close);
+
+    const isClosed =
+      candle.time + timeframeSeconds <= nowSeconds;
+
+    if (validOHLC && isClosed) {
       closedIndexes.push(i);
     }
   }
@@ -64,8 +85,14 @@ function detectLiquiditySweeps(candles, swingEvents, options = {}) {
   const lastClosedIndex =
     closedIndexes[closedIndexes.length - 1];
 
+  // ======================================
+  // 2. Process confirmed swing levels
+  // ======================================
+
   const sweeps = [];
-  const usedLevels = new Set();
+
+  // Prevent duplicate processing.
+  const processedLevels = new Set();
 
   for (const level of swingEvents) {
     if (
@@ -88,19 +115,25 @@ function detectLiquiditySweeps(candles, swingEvents, options = {}) {
 
     if (
       confirmationIndex < 0 ||
-      confirmationIndex >= lastClosedIndex
+      confirmationIndex >= lastClosedIndex ||
+      level.sourceIndex < 0 ||
+      level.sourceIndex >= candles.length
     ) {
       continue;
     }
 
-    const levelKey =
-      level.type + "_" +
-      level.price.toFixed(5) + "_" +
-      level.confirmationIndex;
+    const levelKey = [
+      level.type,
+      level.price.toFixed(8),
+      level.sourceIndex,
+      confirmationIndex
+    ].join("_");
 
-    if (usedLevels.has(levelKey)) {
+    if (processedLevels.has(levelKey)) {
       continue;
     }
+
+    processedLevels.add(levelKey);
 
     const confirmationPosition =
       closedIndexes.indexOf(confirmationIndex);
@@ -116,7 +149,10 @@ function detectLiquiditySweeps(candles, swingEvents, options = {}) {
       continue;
     }
 
-    // Search only after the swing confirmation candle.
+    // ======================================
+    // 3. Search after swing confirmation
+    // ======================================
+
     for (
       let position = confirmationPosition + 1;
       position < closedIndexes.length;
@@ -137,18 +173,30 @@ function detectLiquiditySweeps(candles, swingEvents, options = {}) {
       const lowerWick =
         Math.min(candle.open, candle.close) - candle.low;
 
+      // ======================================
+      // 4. Buy-side liquidity (BSL)
+      // ======================================
+
       if (level.type === "SWING_HIGH") {
+        // A candle close above the swing high
+        // permanently invalidates this liquidity level.
+        if (candle.close > level.price) {
+          break;
+        }
+
         const sweptDistance =
           candle.high - level.price;
 
-        const wickRatio = upperWick / range;
+        const wickRatio =
+          upperWick / range;
 
-        if (
+        const validSweep =
           sweptDistance > 0 &&
           sweptDistance >= minSweepDistance &&
           candle.close < level.price &&
-          wickRatio >= minWickRatio
-        ) {
+          wickRatio >= minWickRatio;
+
+        if (validSweep) {
           sweeps.push({
             type: "BSL_SWEEP",
             level: level.price,
@@ -159,26 +207,39 @@ function detectLiquiditySweeps(candles, swingEvents, options = {}) {
             sweptDistance,
             wickRatio,
             confirmation: "CLOSE_BACK_BELOW",
-            status: "CONFIRMED"
+            status: "CONFIRMED",
+            engineVersion: "V4"
           });
 
-          usedLevels.add(levelKey);
+          // One confirmed sweep per swing level.
           break;
         }
       }
 
+      // ======================================
+      // 5. Sell-side liquidity (SSL)
+      // ======================================
+
       if (level.type === "SWING_LOW") {
+        // A candle close below the swing low
+        // permanently invalidates this liquidity level.
+        if (candle.close < level.price) {
+          break;
+        }
+
         const sweptDistance =
           level.price - candle.low;
 
-        const wickRatio = lowerWick / range;
+        const wickRatio =
+          lowerWick / range;
 
-        if (
+        const validSweep =
           sweptDistance > 0 &&
           sweptDistance >= minSweepDistance &&
           candle.close > level.price &&
-          wickRatio >= minWickRatio
-        ) {
+          wickRatio >= minWickRatio;
+
+        if (validSweep) {
           sweeps.push({
             type: "SSL_SWEEP",
             level: level.price,
@@ -189,15 +250,20 @@ function detectLiquiditySweeps(candles, swingEvents, options = {}) {
             sweptDistance,
             wickRatio,
             confirmation: "CLOSE_BACK_ABOVE",
-            status: "CONFIRMED"
+            status: "CONFIRMED",
+            engineVersion: "V4"
           });
 
-          usedLevels.add(levelKey);
+          // One confirmed sweep per swing level.
           break;
         }
       }
     }
   }
+
+  // ======================================
+  // 6. Return chronological results
+  // ======================================
 
   return sweeps.sort(
     (a, b) => a.sweepIndex - b.sweepIndex

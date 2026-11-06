@@ -1,9 +1,11 @@
+
 "use strict";
 
 // ======================================
 // AI GOLD SIGNALS
-// Market Structure Engine
+// Market Structure Engine V2
 // Swing High / Swing Low / BOS / CHoCH
+// Original Index + Confirmation Tracking
 // ======================================
 
 function detectSwingHigh(candles, index, strength = 2) {
@@ -73,26 +75,31 @@ function analyzeStructure(candles, options = {}) {
     !Number.isInteger(strength) ||
     strength < 1 ||
     !Number.isFinite(timeframeSeconds) ||
-    timeframeSeconds <= 0
+    timeframeSeconds <= 0 ||
+    !Number.isFinite(now)
   ) {
     throw new Error("Invalid structure analysis options");
   }
 
-  // Use closed candles only.
-  // Assumes candle.time is the candle opening timestamp in seconds.
-  const closedCandles = candles.filter(candle => {
-    return (
-      Number.isFinite(candle.time) &&
-      candle.time + timeframeSeconds <= now &&
-      Number.isFinite(candle.open) &&
-      Number.isFinite(candle.high) &&
-      Number.isFinite(candle.low) &&
-      Number.isFinite(candle.close) &&
-      candle.high >= candle.low &&
-      candle.high >= Math.max(candle.open, candle.close) &&
-      candle.low <= Math.min(candle.open, candle.close)
-    );
-  });
+  // Preserve original candle indexes.
+  const closedCandles = candles
+    .map((candle, sourceIndex) => ({
+      ...candle,
+      sourceIndex
+    }))
+    .filter(candle => {
+      return (
+        Number.isFinite(candle.time) &&
+        candle.time + timeframeSeconds <= now &&
+        Number.isFinite(candle.open) &&
+        Number.isFinite(candle.high) &&
+        Number.isFinite(candle.low) &&
+        Number.isFinite(candle.close) &&
+        candle.high >= candle.low &&
+        candle.high >= Math.max(candle.open, candle.close) &&
+        candle.low <= Math.min(candle.open, candle.close)
+      );
+    });
 
   if (closedCandles.length < strength * 2 + 5) {
     return {
@@ -111,20 +118,31 @@ function analyzeStructure(candles, options = {}) {
   let trend = "UNKNOWN";
   let lastBreak = null;
 
-  // A swing is confirmed only after the required candles
-  // to its right have closed.
+  // Detect swings only after right-side confirmation.
   for (let i = strength; i < closedCandles.length; i++) {
     const pivotIndex = i - strength;
     const pivot = closedCandles[pivotIndex];
+    const confirmationCandle = closedCandles[i];
 
     if (detectSwingHigh(closedCandles, pivotIndex, strength)) {
       const swing = {
-        id: "HIGH_" + pivotIndex,
+        id: "HIGH_" + pivot.sourceIndex,
         type: "SWING_HIGH",
         price: pivot.high,
-        index: pivotIndex,
+
+        // Index in the original candles array.
+        index: pivot.sourceIndex,
+
+        // Explicit original and internal indexes.
+        sourceIndex: pivot.sourceIndex,
+        pivotIndex,
+        confirmationIndex: confirmationCandle.sourceIndex,
+
+        // Internal closed-candle index.
         confirmedAt: i,
-        time: pivot.time
+
+        time: pivot.time,
+        confirmationTime: confirmationCandle.time
       };
 
       swings.push(swing);
@@ -133,12 +151,23 @@ function analyzeStructure(candles, options = {}) {
 
     if (detectSwingLow(closedCandles, pivotIndex, strength)) {
       const swing = {
-        id: "LOW_" + pivotIndex,
+        id: "LOW_" + pivot.sourceIndex,
         type: "SWING_LOW",
         price: pivot.low,
-        index: pivotIndex,
+
+        // Index in the original candles array.
+        index: pivot.sourceIndex,
+
+        // Explicit original and internal indexes.
+        sourceIndex: pivot.sourceIndex,
+        pivotIndex,
+        confirmationIndex: confirmationCandle.sourceIndex,
+
+        // Internal closed-candle index.
         confirmedAt: i,
-        time: pivot.time
+
+        time: pivot.time,
+        confirmationTime: confirmationCandle.time
       };
 
       swings.push(swing);
@@ -164,7 +193,8 @@ function analyzeStructure(candles, options = {}) {
     const candle = closedCandles[i];
     const previous = closedCandles[i - 1];
 
-    const newlyConfirmed = swingsByConfirmation.get(i) || [];
+    const newlyConfirmed =
+      swingsByConfirmation.get(i) || [];
 
     for (const swing of newlyConfirmed) {
       if (swing.type === "SWING_HIGH") {
@@ -188,12 +218,11 @@ function analyzeStructure(candles, options = {}) {
       previous.close >= activeLow.price &&
       candle.close < activeLow.price;
 
-    // If both sides break on the same candle,
-    // do not guess the market direction.
+    // Avoid guessing when both sides break together.
     if (brokeHigh && brokeLow) {
       events.push({
         type: "AMBIGUOUS_BREAK",
-        index: i,
+        index: candle.sourceIndex,
         time: candle.time,
         close: candle.close
       });
@@ -238,7 +267,10 @@ function analyzeStructure(candles, options = {}) {
       previousTrend,
       level: brokenSwing.price,
       brokenSwingId: brokenSwing.id,
-      index: i,
+
+      // Original candle index.
+      index: candle.sourceIndex,
+
       time: candle.time,
       close: candle.close,
       confirmation: "CANDLE_CLOSE"
@@ -267,6 +299,12 @@ function analyzeStructure(candles, options = {}) {
 // ======================================
 // EXPORTS
 // ======================================
+
+if (typeof window !== "undefined") {
+  window.detectSwingHigh = detectSwingHigh;
+  window.detectSwingLow = detectSwingLow;
+  window.analyzeStructure = analyzeStructure;
+}
 
 if (typeof module !== "undefined") {
   module.exports = {
